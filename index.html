@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600&family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&display=swap" rel="stylesheet">
+<title>GRAVITY GOD — gesture physics sandbox</title>
+<style>
+  :root{
+    --ink:#e8f4ff;
+    --dim:#7a92a8;
+    --well:#4fd8ff;   /* attract / open palm */
+    --crush:#ffb14f;  /* fist */
+    --spawn:#b48cff;  /* pinch */
+    --bg:#05080d;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;overflow:hidden;background:var(--bg);
+    font-family:"SF Mono","JetBrains Mono","Fira Code",ui-monospace,monospace;color:var(--ink)}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+  video{display:none}
+
+  /* ---------- HUD ---------- */
+  .hud{position:fixed;pointer-events:none;z-index:5;
+    text-transform:uppercase;letter-spacing:.14em;font-size:11px;color:var(--dim)}
+  #hud-title{top:18px;left:20px}
+  #hud-title b{display:block;font-family:'Fraunces',Georgia,serif;font-size:18px;
+    letter-spacing:0;color:var(--ink);font-weight:600;text-transform:lowercase}
+  #hud-title span{opacity:.7}
+  #hud-stats{top:18px;right:20px;text-align:right;line-height:1.9}
+  #hud-stats em{font-style:normal;color:var(--ink)}
+  #hud-gestures{bottom:18px;left:20px;line-height:2}
+  .g{display:flex;gap:10px;align-items:center;transition:opacity .15s}
+  .g .dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.25;transition:all .15s}
+  .g.active{color:var(--ink)}
+  .g.active .dot{opacity:1;box-shadow:0 0 8px currentColor}
+  .g[data-k="well"].active .dot{background:var(--well);color:var(--well)}
+  .g[data-k="crush"].active .dot{background:var(--crush);color:var(--crush)}
+  .g[data-k="spawn"].active .dot{background:var(--spawn);color:var(--spawn)}
+  #hud-keys{bottom:18px;right:20px;text-align:right;line-height:2}
+  #hud-keys kbd{color:var(--ink);border:1px solid #2a3a4a;border-radius:3px;padding:1px 5px;font-size:10px}
+
+  /* ---------- boot overlay ---------- */
+  #boot{position:fixed;inset:0;z-index:10;background:var(--bg);overflow:hidden}
+  #boot.hidden{display:none}
+  #boot-inner{position:absolute;left:clamp(24px,11vw,170px);top:50%;
+    transform:translateY(-53%);max-width:520px;padding-right:24px}
+  #boot h1{font-family:'Fraunces',Georgia,serif;font-weight:600;
+    font-size:clamp(42px,6.5vw,66px);color:var(--ink);
+    letter-spacing:-0.015em;line-height:1.02}
+  #boot .squig{display:block;width:200px;margin:8px 0 0 4px}
+  #boot .tag{font-family:'Fraunces',Georgia,serif;font-style:italic;
+    color:#9fb4c6;font-size:clamp(15px,1.9vw,18px);margin:18px 0 30px;
+    line-height:1.55;max-width:38ch}
+  .moves{list-style:none;font-size:13px;line-height:1.6;color:var(--dim)}
+  .moves li{margin-bottom:9px}
+  .moves .g{font-family:'Caveat',cursive;font-size:22px;font-weight:600;
+    margin-right:9px;vertical-align:-1px}
+  #startrow{margin-top:34px}
+  #start{pointer-events:auto;cursor:pointer;font-family:inherit;font-size:13px;
+    letter-spacing:.04em;color:#06222e;font-weight:700;
+    background:var(--well);border:none;border-radius:6px;
+    padding:14px 26px;transform:rotate(-0.8deg);
+    box-shadow:0 4px 0 #1c6e8c;transition:transform .15s, box-shadow .15s}
+  #start:hover{transform:rotate(0deg) translateY(-2px);box-shadow:0 6px 0 #1c6e8c}
+  #start:active{transform:translateY(3px);box-shadow:0 1px 0 #1c6e8c}
+  #start:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  #boot-note{font-family:'Caveat',cursive;font-size:19px;color:#7d9b6e;
+    margin:16px 0 0 6px;transform:rotate(-1.6deg);display:inline-block}
+  #boot-status{font-size:11px;letter-spacing:.1em;color:var(--dim);
+    min-height:16px;margin-top:18px}
+  #boot-foot{position:absolute;left:clamp(24px,11vw,170px);bottom:26px;
+    font-size:10px;letter-spacing:.08em;color:#42525f}
+  /* lazy falling dots in the background */
+  .fdot{position:absolute;top:-3vh;border-radius:50%;opacity:0;
+    animation:fdrop linear infinite}
+  @keyframes fdrop{
+    0%{transform:translateY(0);opacity:0}
+    8%{opacity:.55} 85%{opacity:.4}
+    100%{transform:translateY(112vh);opacity:0}}
+  @media (prefers-reduced-motion: reduce){.fdot{animation:none;display:none}}
+  .hud.hidden{display:none}
+  @media (max-width:640px){#hud-keys{display:none}}
+</style>
+</head>
+<body>
+
+<video id="cam" playsinline></video>
+<canvas id="stage"></canvas>
+
+<div id="boot">
+  <span class="fdot" style="left:8%;  width:5px;height:5px;background:#4fd8ff;animation-duration:11s;animation-delay:-3s"></span>
+  <span class="fdot" style="left:23%; width:3px;height:3px;background:#b48cff;animation-duration:14s;animation-delay:-9s"></span>
+  <span class="fdot" style="left:55%; width:4px;height:4px;background:#ffb14f;animation-duration:9s; animation-delay:-1s"></span>
+  <span class="fdot" style="left:68%; width:3px;height:3px;background:#4fd8ff;animation-duration:16s;animation-delay:-12s"></span>
+  <span class="fdot" style="left:81%; width:6px;height:6px;background:#b48cff;animation-duration:10s;animation-delay:-5s"></span>
+  <span class="fdot" style="left:90%; width:3px;height:3px;background:#ffb14f;animation-duration:13s;animation-delay:-7s"></span>
+  <span class="fdot" style="left:38%; width:4px;height:4px;background:#4fd8ff;animation-duration:12s;animation-delay:-10s"></span>
+
+  <div id="boot-inner">
+    <h1>gravity god
+      <svg class="squig" viewBox="0 0 200 14" fill="none" aria-hidden="true">
+        <path d="M3 9 C 28 3, 49 12, 74 7 S 122 3, 146 8 S 184 11, 197 6"
+              stroke="#4fd8ff" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+    </h1>
+    <p class="tag">a little physics universe that lives in your webcam.
+    your hands are the gravity.</p>
+
+    <ul class="moves">
+      <li><span class="g" style="color:var(--well)">open palm</span> pulls every bit of matter toward your hand</li>
+      <li><span class="g" style="color:var(--crush)">fist</span> crushes it all into a dense little core</li>
+      <li><span class="g" style="color:var(--crush)">fist &rarr; open</span> ...supernova. you'll see.</li>
+      <li><span class="g" style="color:var(--spawn)">pinch</span> spawns new matter at your fingertips</li>
+      <li><span class="g" style="color:var(--well)">two palms</span> tug-of-war &mdash; matter gets torn between them</li>
+    </ul>
+
+    <div id="startrow">
+      <button id="start">okay, turn on my camera</button>
+    </div>
+    <span id="boot-note">good lighting helps a lot, trust me</span>
+    <div id="boot-status"></div>
+  </div>
+
+  <div id="boot-foot">runs entirely in your browser &middot; nothing is recorded or uploaded</div>
+</div>
+
+<div class="hud hidden" id="hud-title"><b>gravity god</b><span>a physics sandbox</span></div>
+<div class="hud hidden" id="hud-stats">
+  bodies <em id="st-n">0</em><br>fps <em id="st-fps">—</em><br>hands <em id="st-h">0</em>
+</div>
+<div class="hud hidden" id="hud-gestures">
+  <div class="g" data-k="well"><span class="dot"></span>open palm · gravity well</div>
+  <div class="g" data-k="crush"><span class="dot"></span>fist · crush</div>
+  <div class="g" data-k="spawn"><span class="dot"></span>pinch · spawn matter</div>
+</div>
+<div class="hud hidden" id="hud-keys">
+  <kbd>G</kbd> world gravity &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>C</kbd> clear
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script>
+'use strict';
+
+/* ================= config ================= */
+const CFG = {
+  startBodies: 110,
+  maxBodies: 320,
+  worldGravity: 220,        // px/s^2 downward (toggle with G)
+  wellStrength: 2.6e6,      // open palm attraction
+  crushStrength: 5.2e6,     // fist attraction
+  crushDamp: 4.0,           // extra damping near fist (forms a core)
+  blastImpulse: 900,        // px/s kick on fist->open
+  blastRadius: 420,
+  restitution: 0.82,
+  airDrag: 0.12,            // per second
+  trailLen: 9,
+  pinchCooldownMs: 140,
+};
+
+/* ================= dom ================= */
+const video  = document.getElementById('cam');
+const canvas = document.getElementById('stage');
+const ctx    = canvas.getContext('2d');
+const boot   = document.getElementById('boot');
+const bootStatus = document.getElementById('boot-status');
+const stN   = document.getElementById('st-n');
+const stFps = document.getElementById('st-fps');
+const stH   = document.getElementById('st-h');
+const gEls  = {well:document.querySelector('[data-k="well"]'),
+               crush:document.querySelector('[data-k="crush"]'),
+               spawn:document.querySelector('[data-k="spawn"]')};
+
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize); resize();
+
+/* ================= physics bodies ================= */
+const bodies = [];
+function spawnBody(x, y, burst=false){
+  if (bodies.length >= CFG.maxBodies) bodies.shift();
+  const r = 3 + Math.random()*4.5;
+  const a = Math.random()*Math.PI*2;
+  const s = burst ? 120+Math.random()*220 : Math.random()*40;
+  bodies.push({
+    x, y, r, m: r*r,
+    vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+    trail: [],
+  });
+}
+function seedWorld(){
+  bodies.length = 0;
+  for (let i=0;i<CFG.startBodies;i++)
+    spawnBody(Math.random()*W, Math.random()*H*0.7);
+}
+
+/* ================= hand state ================= */
+/* latest mediapipe result, converted to screen space */
+let hands = [];          // [{palm:{x,y}, pinch:{x,y}, gesture:'open'|'fist'|'pinch'|'none', size}]
+let handCount = 0;
+const handMemory = [{}, {}];   // per-slot gesture smoothing + fist->open detection
+let lastPinchSpawn = 0;
+
+/* video -> screen mapping (cover fit, mirrored) */
+let vmap = {dw:0, dh:0, ox:0, oy:0};
+function updateVmap(){
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const scale = Math.max(W/vw, H/vh);
+  vmap.dw = vw*scale; vmap.dh = vh*scale;
+  vmap.ox = (W - vmap.dw)/2; vmap.oy = (H - vmap.dh)/2;
+}
+const toScreen = lm => ({
+  x: vmap.ox + (1 - lm.x) * vmap.dw,   // mirrored
+  y: vmap.oy + lm.y * vmap.dh,
+});
+const dist = (a,b)=>Math.hypot(a.x-b.x, a.y-b.y);
+
+/* classify gesture from 21 landmarks (screen space) */
+function classify(lm){
+  // hand scale reference: wrist -> middle MCP
+  const size = dist(lm[0], lm[9]) || 1;
+  const palm = {
+    x:(lm[0].x+lm[5].x+lm[9].x+lm[13].x+lm[17].x)/5,
+    y:(lm[0].y+lm[5].y+lm[9].y+lm[13].y+lm[17].y)/5,
+  };
+  // finger extension: tip farther from wrist than PIP joint?
+  const ext = (tip,pip)=> dist(lm[tip],lm[0]) > dist(lm[pip],lm[0])*1.12;
+  const fingersUp = [ext(8,6),ext(12,10),ext(16,14),ext(20,18)];
+  const nUp = fingersUp.filter(Boolean).length;
+  const pinchD = dist(lm[4], lm[8]) / size;
+
+  let gesture = 'none';
+  if (pinchD < 0.32 && nUp >= 2)      gesture = 'pinch';
+  else if (nUp === 0)                  gesture = 'fist';
+  else if (nUp === 4)                  gesture = 'open';
+
+  return {palm, size, gesture,
+          pinch:{x:(lm[4].x+lm[8].x)/2, y:(lm[4].y+lm[8].y)/2}};
+}
+
+/* blast events emitted on fist -> open */
+const blasts = [];   // {x,y,t}
+
+function onResults(res){
+  updateVmap();
+  hands = [];
+  handCount = res.multiHandLandmarks ? res.multiHandLandmarks.length : 0;
+  if (!res.multiHandLandmarks) return;
+
+  res.multiHandLandmarks.forEach((lmRaw, i)=>{
+    const lm = lmRaw.map(toScreen);
+    const h = classify(lm);
+
+    // temporal smoothing: gesture must hold 3 frames to switch
+    const mem = handMemory[i] || (handMemory[i] = {});
+    if (h.gesture === mem.pending){ mem.count = (mem.count||0)+1; }
+    else { mem.pending = h.gesture; mem.count = 1; }
+    if (mem.count >= 3 && mem.stable !== mem.pending){
+      // fist -> open ⇒ supernova
+      if (mem.stable === 'fist' && mem.pending === 'open' && mem.lastPalm)
+        blasts.push({x:mem.lastPalm.x, y:mem.lastPalm.y, t:performance.now()});
+      mem.stable = mem.pending;
+    }
+    h.gesture = mem.stable || 'none';
+    mem.lastPalm = h.palm;
+    hands.push(h);
+  });
+}
+
+/* ================= mediapipe boot ================= */
+async function begin(){
+  bootStatus.textContent = 'requesting camera…';
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{width:{ideal:1280}, height:{ideal:720}, facingMode:'user'}, audio:false});
+    video.srcObject = stream;
+    await video.play();
+  }catch(e){
+    bootStatus.textContent = 'camera blocked — allow camera access, or download this file and open it directly in your browser';
+    return;
+  }
+  bootStatus.textContent = 'loading hand model…';
+  const mp = new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}`});
+  mp.setOptions({maxNumHands:2, modelComplexity:1,
+                 minDetectionConfidence:0.6, minTrackingConfidence:0.5});
+  mp.onResults(onResults);
+
+  // feed frames manually (no camera_utils dependency)
+  (async function pump(){
+    if (video.readyState >= 2) await mp.send({image:video});
+    requestAnimationFrame(pump);
+  })();
+
+  seedWorld();
+  boot.classList.add('hidden');
+  document.querySelectorAll('.hud').forEach(el=>el.classList.remove('hidden'));
+  running = true;
+}
+document.getElementById('start').addEventListener('click', begin);
+
+/* ================= simulation ================= */
+let running=false, worldGravityOn=true;
+window.addEventListener('keydown', e=>{
+  if (e.key==='g'||e.key==='G') worldGravityOn=!worldGravityOn;
+  if (e.key==='r'||e.key==='R') seedWorld();
+  if (e.key==='c'||e.key==='C') bodies.length=0;
+});
+
+function physics(dt){
+  const now = performance.now();
+
+  // pinch spawning
+  for (const h of hands){
+    if (h.gesture==='pinch' && now-lastPinchSpawn > CFG.pinchCooldownMs){
+      spawnBody(h.pinch.x, h.pinch.y, true);
+      spawnBody(h.pinch.x, h.pinch.y, true);
+      lastPinchSpawn = now;
+    }
+  }
+
+  // expire old blasts (visual ring lives 450ms; impulse applied once below)
+  while (blasts.length && now - blasts[0].t > 450) blasts.shift();
+
+  for (const b of bodies){
+    let fx=0, fy=worldGravityOn ? CFG.worldGravity*b.m : 0;
+
+    for (const h of hands){
+      const dx=h.palm.x-b.x, dy=h.palm.y-b.y;
+      const d2=dx*dx+dy*dy, d=Math.sqrt(d2)||1;
+      if (h.gesture==='open'){
+        const f=Math.min(CFG.wellStrength*b.m/(d2+4000), 9000*b.m);
+        fx+=f*dx/d; fy+=f*dy/d;
+      } else if (h.gesture==='fist'){
+        const f=Math.min(CFG.crushStrength*b.m/(d2+2500), 16000*b.m);
+        fx+=f*dx/d; fy+=f*dy/d;
+        if (d<120){ b.vx*=Math.max(0,1-CFG.crushDamp*dt); b.vy*=Math.max(0,1-CFG.crushDamp*dt); }
+      }
+    }
+
+    b.vx += fx/b.m*dt; b.vy += fy/b.m*dt;
+    const drag = Math.max(0, 1-CFG.airDrag*dt);
+    b.vx*=drag; b.vy*=drag;
+    b.x += b.vx*dt; b.y += b.vy*dt;
+
+    // walls
+    if (b.x<b.r){b.x=b.r; b.vx=Math.abs(b.vx)*CFG.restitution;}
+    if (b.x>W-b.r){b.x=W-b.r; b.vx=-Math.abs(b.vx)*CFG.restitution;}
+    if (b.y<b.r){b.y=b.r; b.vy=Math.abs(b.vy)*CFG.restitution;}
+    if (b.y>H-b.r){b.y=H-b.r; b.vy=-Math.abs(b.vy)*CFG.restitution; b.vx*=0.96;}
+
+    // trail
+    b.trail.push(b.x, b.y);
+    if (b.trail.length > CFG.trailLen*2) b.trail.splice(0, b.trail.length-CFG.trailLen*2);
+  }
+
+  // apply fresh blasts once
+  for (const bl of blasts){
+    if (bl.applied) continue;
+    bl.applied = true;
+    for (const b of bodies){
+      const dx=b.x-bl.x, dy=b.y-bl.y, d=Math.hypot(dx,dy)||1;
+      if (d < CFG.blastRadius){
+        const k = CFG.blastImpulse * (1 - d/CFG.blastRadius);
+        b.vx += k*dx/d; b.vy += k*dy/d;
+      }
+    }
+  }
+
+  // pairwise collisions (positional separation + impulse)
+  for (let i=0;i<bodies.length;i++){
+    const a=bodies[i];
+    for (let j=i+1;j<bodies.length;j++){
+      const c=bodies[j];
+      const dx=c.x-a.x, dy=c.y-a.y;
+      const rr=a.r+c.r, d2=dx*dx+dy*dy;
+      if (d2>0 && d2<rr*rr){
+        const d=Math.sqrt(d2), nx=dx/d, ny=dy/d;
+        const overlap=(rr-d)/2;
+        a.x-=nx*overlap; a.y-=ny*overlap;
+        c.x+=nx*overlap; c.y+=ny*overlap;
+        const rvx=c.vx-a.vx, rvy=c.vy-a.vy;
+        const vn=rvx*nx+rvy*ny;
+        if (vn<0){
+          const imp=-(1+CFG.restitution)*vn/(1/a.m+1/c.m);
+          a.vx-=imp*nx/a.m; a.vy-=imp*ny/a.m;
+          c.vx+=imp*nx/c.m; c.vy+=imp*ny/c.m;
+        }
+      }
+    }
+  }
+}
+
+/* ================= rendering ================= */
+function speedHue(v){           // slow=blue(205) -> fast=hot(10)
+  const t=Math.min(1, v/750);
+  return 205 - 195*t;
+}
+
+function render(now){
+  // video, mirrored + cover-fit
+  ctx.clearRect(0,0,W,H);
+  if (video.readyState>=2){
+    updateVmap();
+    ctx.save();
+    ctx.translate(vmap.ox+vmap.dw, vmap.oy);
+    ctx.scale(-1,1);
+    ctx.drawImage(video, 0, 0, vmap.dw, vmap.dh);
+    ctx.restore();
+  }
+  // dim layer so matter pops
+  ctx.fillStyle='rgba(4,8,14,0.42)';
+  ctx.fillRect(0,0,W,H);
+
+  // blast rings
+  for (const bl of blasts){
+    const age=(now-bl.t)/450;
+    const r = 30 + age*CFG.blastRadius;
+    ctx.beginPath(); ctx.arc(bl.x,bl.y,r,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(255,177,79,${0.7*(1-age)})`;
+    ctx.lineWidth=3*(1-age)+0.5; ctx.stroke();
+  }
+
+  // bodies + trails
+  ctx.globalCompositeOperation='lighter';
+  for (const b of bodies){
+    const v=Math.hypot(b.vx,b.vy);
+    const hue=speedHue(v);
+    // trail
+    if (b.trail.length>=4){
+      ctx.beginPath();
+      ctx.moveTo(b.trail[0], b.trail[1]);
+      for (let k=2;k<b.trail.length;k+=2) ctx.lineTo(b.trail[k], b.trail[k+1]);
+      ctx.strokeStyle=`hsla(${hue},95%,62%,0.28)`;
+      ctx.lineWidth=Math.max(1,b.r*0.5); ctx.stroke();
+    }
+    // glow
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r*2.6,0,Math.PI*2);
+    ctx.fillStyle=`hsla(${hue},95%,60%,0.10)`; ctx.fill();
+    // core
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
+    ctx.fillStyle=`hsla(${hue},95%,68%,0.95)`; ctx.fill();
+  }
+  ctx.globalCompositeOperation='source-over';
+
+  // hand indicators
+  let anyWell=false, anyCrush=false, anySpawn=false;
+  for (const h of hands){
+    if (h.gesture==='open'){
+      anyWell=true;
+      ring(h.palm.x,h.palm.y, 34+6*Math.sin(now/180), 'rgba(79,216,255,0.9)');
+      ring(h.palm.x,h.palm.y, 78+10*Math.sin(now/180+1), 'rgba(79,216,255,0.25)');
+    } else if (h.gesture==='fist'){
+      anyCrush=true;
+      ring(h.palm.x,h.palm.y, 26+3*Math.sin(now/90), 'rgba(255,177,79,0.95)');
+    } else if (h.gesture==='pinch'){
+      anySpawn=true;
+      ring(h.pinch.x,h.pinch.y, 14, 'rgba(180,140,255,0.95)');
+    }
+  }
+  gEls.well.classList.toggle('active', anyWell);
+  gEls.crush.classList.toggle('active', anyCrush);
+  gEls.spawn.classList.toggle('active', anySpawn);
+
+  stN.textContent=bodies.length;
+  stH.textContent=handCount;
+}
+function ring(x,y,r,style){
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+  ctx.strokeStyle=style; ctx.lineWidth=2; ctx.stroke();
+}
+
+/* ================= main loop ================= */
+let last=performance.now(), fpsAcc=0, fpsN=0, fpsT=last;
+function loop(now){
+  requestAnimationFrame(loop);
+  if (!running) return;
+  let dt=(now-last)/1000; last=now;
+  dt=Math.min(dt, 1/30);          // clamp to avoid physics explosions on tab-switch
+  physics(dt);
+  render(now);
+  fpsAcc+=1/Math.max(dt,1e-4); fpsN++;
+  if (now-fpsT>500){ stFps.textContent=Math.round(fpsAcc/fpsN); fpsAcc=0; fpsN=0; fpsT=now; }
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
