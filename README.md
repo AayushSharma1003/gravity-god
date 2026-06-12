@@ -131,4 +131,3 @@ MIT — do whatever you want with it.
 
 ---
 
-*built with Claude Sonnet as a creative coding experiment — real physics simulation, hand tracking, and a complete UI redesign, all in one HTML file.*
